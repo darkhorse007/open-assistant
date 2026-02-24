@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "open-assistant",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.5",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "dependencies": {
+    "@open-assistant/protocol": "workspace:*"
+  },
+  "scripts": {
+    "dev:asr": "bun run --cwd services/asr-mock dev",
+    "dev:asr:real": "bun run --cwd services/asr dev",
+    "dev:gateway": "bun run --cwd services/gateway dev",
+    "dev:media:mock": "bun run --cwd services/media-mock dev",
+    "dev:media": "bun run --cwd services/media dev",
+    "dev:rag:mock": "bun run --cwd services/rag-mock dev",
+    "dev:rag": "bun run --cwd services/rag dev",
+    "dev:tts": "bun run --cwd services/tts-mock dev",
+    "dev:tts:real": "bun run --cwd services/tts dev",
+    "dev:web": "bun run --cwd apps/web dev",
+    "check:ready": "bun scripts/dev-ready.ts",
+    "test:e2e": "bun scripts/e2e.ts",
+    "perf:10": "bun scripts/perf-10sessions.ts",
+    "perf:asrtts": "bun scripts/perf-asrtts.ts",
+    "ops:full": "bun scripts/full-stack.ts",
+    "ops:full:up": "bun scripts/full-stack.ts up",
+    "ops:full:down": "bun scripts/full-stack.ts down",
+    "ops:full:perf": "bun scripts/full-stack.ts perf",
+    "ops:full:perf:asrtts": "bun scripts/full-stack.ts perf-asrtts",
+    "ops:full:perf:all": "bun scripts/full-stack.ts perf-all",
+    "ops:full:up-perf:asrtts": "bun scripts/full-stack.ts up-perf-asrtts",
+    "ops:full:up-perf:all": "bun scripts/full-stack.ts up-perf-all",
+    "typecheck": "bun run --cwd packages/protocol typecheck && bun run --cwd services/asr-mock typecheck && bun run --cwd services/asr typecheck && bun run --cwd services/tts-mock typecheck && bun run --cwd services/tts typecheck && bun run --cwd services/media-mock typecheck && bun run --cwd services/rag-mock typecheck && bun run --cwd services/media typecheck && bun run --cwd services/rag typecheck && bun run --cwd services/gateway typecheck && bun run --cwd apps/web typecheck",
+    "format": "bunx prettier -w ."
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@tsconfig/bun": "1.0.9",
+    "@types/bun": "1.3.5",
+    "@types/node": "22.13.9",
+    "prettier": "3.6.2",
+    "typescript": "5.8.2"
+  }
+}

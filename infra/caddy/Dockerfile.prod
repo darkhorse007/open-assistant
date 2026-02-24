@@ -1,0 +1,11 @@
+FROM oven/bun:1.3.6 AS web-build
+WORKDIR /app
+
+COPY . .
+RUN bun install --frozen-lockfile
+RUN bun run --cwd apps/web build
+
+FROM caddy:2.8.4
+COPY infra/caddy/Caddyfile.prod /etc/caddy/Caddyfile
+COPY --from=web-build /app/apps/web/dist /srv
+

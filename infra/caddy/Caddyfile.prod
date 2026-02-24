@@ -1,0 +1,17 @@
+{
+  auto_https disable_redirects
+}
+
+https://localhost:7443 {
+  tls internal
+
+  @gateway path /ws* /assets* /healthz /readyz /mcp /metrics /audit* /admin/api* /admin/assets*
+  reverse_proxy @gateway gateway:7001
+
+  @web_assets path /web-assets/*
+  header @web_assets Access-Control-Allow-Origin "*"
+
+  root * /srv
+  try_files {path} /index.html
+  file_server
+}

@@ -1,0 +1,20 @@
+services:
+  # Hotfix overlay (offline-friendly):
+  # - Bind-mount Gateway + TTS adapter sources into the prod image, avoiding a full rebuild.
+  #
+  # Usage:
+  #   docker compose -f infra/docker-compose.full.yml -f infra/docker-compose.prod.yml -f infra/docker-compose.full.hotfix-lipsync.yml up -d gateway tts
+  #
+  # Note:
+  # - This is intended for dev/CI environments where Docker Hub access is blocked.
+  # - For real prod/offline deployments, rebuild/publish `openassistant-app:prod` with the fixes instead.
+  gateway:
+    volumes: !override
+      - ../services/gateway/src/index.ts:/app/services/gateway/src/index.ts:ro
+      - ../services/gateway/src/tts.ts:/app/services/gateway/src/tts.ts:ro
+
+  tts:
+    volumes: !override
+      - ../services/tts/src/index.ts:/app/services/tts/src/index.ts:ro
+      - ../services/tts/vendor/pinyin-pro/index.mjs:/app/services/tts/vendor/pinyin-pro/index.mjs:ro
+      - ../services/tts/vendor/pinyin-pro/index.js:/app/services/tts/vendor/pinyin-pro/index.js:ro

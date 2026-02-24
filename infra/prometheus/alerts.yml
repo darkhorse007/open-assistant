@@ -1,0 +1,56 @@
+groups:
+  - name: open-assistant-gateway
+    rules:
+      - alert: OpenAssistantGatewayErrorsRateHigh
+        expr: sum(rate(oa_gateway_errors_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Open Assistant Gateway errors are high"
+          description: "Errors rate is {{ $value }} errors/sec (5m avg)."
+
+      - alert: OpenAssistantGatewayTtsQueueDepthHigh
+        expr: oa_gateway_tts_queue_depth > 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Open Assistant Gateway TTS queue is backing up"
+          description: "TTS queue depth is {{ $value }} segments."
+
+      - alert: OpenAssistantGatewayAsrQueueDepthHigh
+        expr: oa_gateway_asr_queue_depth > 200
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Open Assistant Gateway ASR queue is backing up"
+          description: "ASR queue depth is {{ $value }} audio frames."
+
+      - alert: OpenAssistantGatewayAsrDroppedFrames
+        expr: rate(oa_gateway_asr_dropped_frames_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Open Assistant Gateway is dropping ASR frames"
+          description: "Dropped ASR frames rate is {{ $value }} frames/sec (5m avg)."
+
+      - alert: OpenAssistantGatewayTtsFirstAudioP95High
+        expr: histogram_quantile(0.95, sum(rate(oa_gateway_tts_first_audio_ms_bucket[5m])) by (le)) > 2500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Open Assistant Gateway TTS first audio latency (p95) is high"
+          description: "p95 first-audio latency is {{ $value }}ms (5m avg)."
+
+      - alert: OpenAssistantGatewayAsrFinalLatencyP95High
+        expr: histogram_quantile(0.95, sum(rate(oa_gateway_asr_final_latency_ms_bucket[5m])) by (le)) > 2000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Open Assistant Gateway ASR final latency (p95) is high"
+          description: "p95 ASR final latency is {{ $value }}ms (5m avg)."

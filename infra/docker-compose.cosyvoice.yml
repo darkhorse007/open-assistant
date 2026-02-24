@@ -1,0 +1,41 @@
+services:
+  # CosyVoice runtime FastAPI server.
+  # Note: you must build the image first (see docs/TTS_COSYVOICE.md) or override COSYVOICE_IMAGE.
+  cosyvoice:
+    image: ${COSYVOICE_IMAGE:-cosyvoice:v1.0}
+    working_dir: /opt/CosyVoice/CosyVoice/runtime/python/fastapi
+    # Note: /inference_sft requires an SFT-capable model (spk2info). Use `CosyVoice-300M-SFT` by default.
+    command: bash -lc "python3 server.py --port 50000 --model_dir ${COSYVOICE_MODEL_DIR:-iic/CosyVoice-300M-SFT}"
+    volumes:
+      # Persist ModelScope cache to speed up restarts / enable offline copy-in.
+      - cosyvoice_modelscope_cache:/root/.cache/modelscope
+    ports:
+      - "50000:50000"
+    # GPU settings are environment-dependent (NVIDIA Container Toolkit, Docker Compose version, etc.).
+    # If your compose supports it, uncomment the following:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
+
+  # Override base compose's `tts` service to use the real adapter instead of tts-mock.
+  tts:
+    image: oven/bun:1.3.6
+    working_dir: /app
+    volumes:
+      - ..:/app
+    command: bun run --cwd services/tts dev
+    environment:
+      - OA_TTS_HOST=0.0.0.0
+      - OA_TTS_PORT=7003
+      - OA_TTS_BACKEND=cosyvoice
+      - OA_TTS_COSYVOICE_BASE_URL=http://cosyvoice:50000
+      - OA_TTS_COSYVOICE_SPK_ID=中文女
+    depends_on:
+      - cosyvoice
+    ports:
+      - "7003:7003"
+
+volumes:
+  cosyvoice_modelscope_cache:

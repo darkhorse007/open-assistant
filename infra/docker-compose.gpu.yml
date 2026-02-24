@@ -1,0 +1,21 @@
+services:
+  # Enable NVIDIA GPU for CosyVoice container.
+  #
+  # Usage:
+  #   docker compose -f infra/docker-compose.full.yml -f infra/docker-compose.gpu.yml up
+  #
+  # Requirements:
+  #   - NVIDIA driver installed
+  #   - NVIDIA Container Toolkit installed
+  cosyvoice:
+    # Prefer the Compose-native GPU request if supported.
+    # (Docker Compose v2+)
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]

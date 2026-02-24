@@ -1,0 +1,14 @@
+services:
+  # Hotfix overlay (offline-friendly):
+  # - Bind-mount ASR adapter source into the prod image, avoiding a full rebuild.
+  #
+  # Usage:
+  #   docker compose -f infra/docker-compose.full.yml -f infra/docker-compose.prod.yml -f infra/docker-compose.full.hotfix-asr.yml up -d asr
+  #
+  # Note:
+  # - This is intended for dev/CI environments where Docker Hub access is blocked.
+  # - For real prod/offline deployments, rebuild/publish `openassistant-app:prod` with the fixes instead.
+  asr:
+    volumes: !override
+      - ../services/asr/src/index.ts:/app/services/asr/src/index.ts:ro
+

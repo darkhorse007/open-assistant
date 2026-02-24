@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+!infra/.env.example
+*.log
+.DS_Store
+.vendor-tmp/
+.bun-cache/
+.bun-tmp/
+.tmp/
+.npm-cache/
+test-results/
+
+# Large local model artifacts (keep out of git history)
+infra/funasr-runtime-resources/models/

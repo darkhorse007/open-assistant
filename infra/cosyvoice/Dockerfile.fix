@@ -1,0 +1,10 @@
+ARG BASE_IMAGE=cosyvoice:v1.0
+
+FROM ${BASE_IMAGE}
+
+# CosyVoice currently pins HyperPyYAML but not ruamel.yaml.
+# Newer ruamel.yaml versions can crash on startup with:
+#   AttributeError: 'Loader' object has no attribute 'max_depth'
+#
+# Pin to a known-compatible version so the FastAPI server can boot reliably.
+RUN pip3 install --no-cache-dir --force-reinstall "ruamel.yaml==0.17.28"

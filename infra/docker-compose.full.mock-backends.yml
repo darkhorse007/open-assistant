@@ -1,0 +1,29 @@
+services:
+  # Optional overlay: run the full stack without real ASR/TTS dependencies.
+  # - Disable FunASR/CosyVoice services by default (profile "real")
+  # - Switch ASR/TTS adapters to built-in mock backends
+  #
+  # Usage:
+  #   docker compose -f infra/docker-compose.full.yml -f infra/docker-compose.full.mock-backends.yml up
+  #   docker compose -f infra/docker-compose.full.yml -f infra/docker-compose.prod.yml -f infra/docker-compose.full.mock-backends.yml up -d
+
+  funasr:
+    profiles: ["real"]
+
+  cosyvoice:
+    profiles: ["real"]
+
+  asr:
+    depends_on: !reset []
+    environment: !override
+      - OA_ASR_HOST=0.0.0.0
+      - OA_ASR_PORT=7002
+      - OA_ASR_BACKEND=mock
+
+  tts:
+    depends_on: !reset []
+    environment: !override
+      - OA_TTS_HOST=0.0.0.0
+      - OA_TTS_PORT=7003
+      - OA_TTS_BACKEND=mock
+

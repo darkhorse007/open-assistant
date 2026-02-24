@@ -1,0 +1,23 @@
+node_modules
+test-results
+tests
+.env
+.env.*
+infra/.env
+infra/.env.*
+*.log
+.DS_Store
+
+# Large local caches/config
+.opencode/node_modules
+.opencode/.cache
+.opencode/.local
+.opencode/.config
+
+# Vite / build output
+apps/web/dist
+dist
+
+# Large local model weights (bind-mounted at runtime)
+infra/funasr-runtime-resources/models
+infra/funasr-runtime-resources/models/**

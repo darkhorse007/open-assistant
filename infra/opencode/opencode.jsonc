@@ -1,0 +1,29 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "bash": "deny",
+    "edit": "deny",
+    "webfetch": "deny"
+  },
+  "mcp": {
+    "openassistant": {
+      "type": "remote",
+      "url": "http://gateway:7001/mcp",
+      "enabled": true,
+      "oauth": false,
+      "headers": {
+        "Authorization": "Bearer {env:OA_OPENCODE_MCP_TOKEN}"
+      }
+    }
+  },
+  "tools": {
+    "openassistant_*": false
+  },
+  "agent": {
+    "open-assistant": {
+      "tools": {
+        "openassistant_*": true
+      }
+    }
+  }
+}

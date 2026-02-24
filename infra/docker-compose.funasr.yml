@@ -1,0 +1,41 @@
+services:
+  # FunASR Runtime websocket server (2pass).
+  # Note: This service may download models from ModelScope on first start.
+  funasr:
+    image: registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.13
+    working_dir: /workspace/FunASR/runtime
+    command: >
+      bash -lc
+      "bash run_server_2pass.sh
+      --download-model-dir /workspace/models
+      --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx
+      --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx
+      --online-model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx
+      --punc-dir damo/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727-onnx
+      --lm-dir damo/speech_ngram_lm_zh-cn-ai-wesp-fst
+      --itn-dir thuduj12/fst_itn_zh
+      --hotword /workspace/models/hotwords.txt
+      --certfile 0"
+    volumes:
+      - ./funasr-runtime-resources/models:/workspace/models
+    ports:
+      - "10096:10095"
+
+  # Override base compose's `asr` service to use the real adapter instead of asr-mock.
+  asr:
+    image: oven/bun:1.3.6
+    working_dir: /app
+    volumes:
+      - ..:/app
+    command: bun run --cwd services/asr dev
+    environment:
+      - OA_ASR_HOST=0.0.0.0
+      - OA_ASR_PORT=7002
+      - OA_ASR_BACKEND=funasr
+      - OA_ASR_FUNASR_URL=ws://funasr:10095
+      - OA_ASR_FUNASR_MODE=2pass
+    depends_on:
+      - funasr
+    ports:
+      - "7002:7002"
+

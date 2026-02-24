@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Demo Slides</title>
+    <style>
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        margin: 0;
+        padding: 24px;
+        background: #ffffff;
+        color: #0f172a;
+      }
+      .card {
+        max-width: 900px;
+        margin: 0 auto;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        padding: 20px 24px;
+        box-shadow: 0 10px 30px rgba(2, 6, 23, 0.08);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0 0 12px;
+        line-height: 1.6;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+      code {
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Demo Slides (mock)</h1>
+      <p>这是一个最小可用的 slides 示例，用于验证 <code>ui.present(assetType=slides)</code> 的播放链路。</p>
+      <ul>
+        <li>播放入口：Web 端 iframe + sandbox</li>
+        <li>素材来源：<code>/assets/demo-slides</code></li>
+        <li>停止播放：<code>ui.stop(target=video|all)</code></li>
+      </ul>
+    </div>
+  </body>
+</html>
+

@@ -1,0 +1,63 @@
+services:
+  # Production overlay:
+  # - Build the web UI into the Caddy image (static serving)
+  # - Run Bun services from baked images (no bind mounts / no --watch)
+  # - Preinstall OpenCode server (bunx --no-install) for offline runtime
+
+  caddy:
+    image: openassistant-caddy:prod
+    build:
+      context: ..
+      dockerfile: infra/caddy/Dockerfile.prod
+    volumes: !override
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: !override
+      - gateway
+
+  # Disable the dev web server by default in prod mode.
+  web:
+    profiles: ["dev"]
+
+  gateway:
+    image: openassistant-app:prod
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["bun", "--cwd", "services/gateway", "src/index.ts"]
+    volumes: !override
+      - gateway_data:/app/services/gateway/data
+
+  asr:
+    image: openassistant-app:prod
+    command: ["bun", "--cwd", "services/asr", "src/index.ts"]
+    volumes: !reset []
+
+  tts:
+    image: openassistant-app:prod
+    command: ["bun", "--cwd", "services/tts", "src/index.ts"]
+    volumes: !reset []
+
+  media:
+    image: openassistant-app:prod
+    command: ["bun", "--cwd", "services/media", "src/index.ts"]
+    volumes: !override
+      - media_data:/app/services/media/data
+
+  rag:
+    image: openassistant-app:prod
+    command: ["bun", "--cwd", "services/rag", "src/index.ts"]
+    volumes: !override
+      - rag_data:/app/services/rag/data
+
+  opencode:
+    image: openassistant-opencode:prod
+    build:
+      context: ..
+      dockerfile: infra/opencode/Dockerfile.prod
+    command: ["/app/node_modules/.bin/opencode", "serve", "--port", "4096", "--hostname", "0.0.0.0"]
+    volumes: !override
+      - opencode_data:/root/.local/share/opencode
+      - opencode_config:/root/.config/opencode
+      - opencode_cache:/root/.cache/opencode
+      - opencode_state:/root/.local/state/opencode

@@ -1,0 +1,243 @@
+services:
+  caddy:
+    image: caddy:2.8.4
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "7080:80"
+      - "7443:443"
+    depends_on:
+      - gateway
+      - web
+
+  # FunASR Runtime websocket server (2pass).
+  # Note: This service may download models from ModelScope on first start.
+  funasr:
+    image: ${FUNASR_IMAGE:-registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.13}
+    working_dir: /workspace/FunASR/runtime
+    command: >
+      bash -lc
+      "bash run_server_2pass.sh
+      --download-model-dir /workspace/models
+      --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx
+      --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx
+      --online-model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx
+      --punc-dir damo/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727-onnx
+      --lm-dir damo/speech_ngram_lm_zh-cn-ai-wesp-fst
+      --itn-dir thuduj12/fst_itn_zh
+      --hotword /workspace/models/hotwords.txt
+      --certfile 0;
+      sleep infinity"
+    volumes:
+      - ./funasr-runtime-resources/models:/workspace/models
+    ports:
+      - "10096:10095"
+
+  # CosyVoice runtime FastAPI server.
+  # Note: you must build the image first (see docs/TTS_COSYVOICE.md) or override COSYVOICE_IMAGE.
+  cosyvoice:
+    image: ${COSYVOICE_IMAGE:-cosyvoice:v1.0}
+    working_dir: /opt/CosyVoice/CosyVoice/runtime/python/fastapi
+    # Note: /inference_sft requires an SFT-capable model (spk2info). Use `CosyVoice-300M-SFT` by default.
+    command: bash -lc "python3 server.py --port 50000 --model_dir ${COSYVOICE_MODEL_DIR:-iic/CosyVoice-300M-SFT}"
+    volumes:
+      # Persist ModelScope cache to speed up restarts / enable offline copy-in.
+      - cosyvoice_modelscope_cache:/root/.cache/modelscope
+    ports:
+      - "50000:50000"
+    # GPU settings are environment-dependent (NVIDIA Container Toolkit, Docker Compose version, etc.).
+    # If your compose supports it, uncomment the following:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - capabilities: [gpu]
+
+  asr:
+    image: oven/bun:1.3.6
+    working_dir: /app
+    volumes:
+      - ..:/app
+    command: bun run --cwd services/asr dev
+    environment:
+      - OA_ASR_HOST=0.0.0.0
+      - OA_ASR_PORT=7002
+      - OA_ASR_BACKEND=funasr
+      - OA_ASR_FUNASR_URL=ws://funasr:10095
+      - OA_ASR_FUNASR_MODE=2pass
+    ports:
+      - "7002:7002"
+    depends_on:
+      - funasr
+
+  tts:
+    image: oven/bun:1.3.6
+    working_dir: /app
+    volumes:
+      - ..:/app
+    command: bun run --cwd services/tts dev
+    environment:
+      - OA_TTS_HOST=0.0.0.0
+      - OA_TTS_PORT=7003
+      - OA_TTS_BACKEND=cosyvoice
+      - OA_TTS_COSYVOICE_BASE_URL=http://cosyvoice:50000
+      - OA_TTS_COSYVOICE_SPK_ID=中文女
+    ports:
+      - "7003:7003"
+    depends_on:
+      - cosyvoice
+
+  media:
+    image: oven/bun:1.3.6
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - media_data:/app/services/media/data
+    command: bun run --cwd services/media dev
+    environment:
+      - OA_MEDIA_HOST=0.0.0.0
+      - OA_MEDIA_PORT=7004
+      - OA_MEDIA_DB_PATH=/app/services/media/data/media.sqlite
+      - OA_MEDIA_DEFAULT_TENANT=default
+      - OA_MEDIA_DEFAULT_PROJECT=open-assistant
+      - OA_ADMIN_TOKEN=${OA_ADMIN_TOKEN:-}
+      - OA_MEDIA_ADMIN_TOKEN=${OA_MEDIA_ADMIN_TOKEN:-}
+    ports:
+      - "7004:7004"
+
+  rag:
+    image: oven/bun:1.3.6
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - rag_data:/app/services/rag/data
+    command: bun run --cwd services/rag dev
+    environment:
+      - OA_RAG_HOST=0.0.0.0
+      - OA_RAG_PORT=7005
+      - OA_RAG_DB_PATH=/app/services/rag/data/rag.sqlite
+      - OA_RAG_DEFAULT_TENANT=default
+      - OA_RAG_DEFAULT_PROJECT=open-assistant
+      - OA_ADMIN_TOKEN=${OA_ADMIN_TOKEN:-}
+      - OA_RAG_ADMIN_TOKEN=${OA_RAG_ADMIN_TOKEN:-}
+      - OA_AUDIT_SINK_URL=http://gateway:7001
+    ports:
+      - "7005:7005"
+
+  opencode:
+    image: oven/bun:1.3.6
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - ./opencode/opencode.jsonc:/app/opencode.jsonc:ro
+      - opencode_data:/root/.local/share/opencode
+      - opencode_config:/root/.config/opencode
+      - opencode_cache:/root/.cache/opencode
+      - opencode_state:/root/.local/state/opencode
+    command: bunx --yes opencode-ai serve --port 4096 --hostname 0.0.0.0
+    environment:
+      - OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD:-opencode}
+      - OA_OPENCODE_MCP_TOKEN=${OA_OPENCODE_MCP_TOKEN:-}
+    ports:
+      - "4096:4096"
+
+  gateway:
+    image: oven/bun:1.3.6
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - gateway_data:/app/services/gateway/data
+    command: bun run --cwd services/gateway dev
+    environment:
+      - OA_GATEWAY_HOST=0.0.0.0
+      - OA_GATEWAY_PORT=7001
+      - OA_GW_MAX_SESSIONS=10
+      - OA_GW_SESSION_IDLE_TTL_MS=900000
+      - OA_GW_SESSION_SWEEP_INTERVAL_MS=30000
+      - OA_GW_TURN_TIMEOUT_MS=${OA_GW_TURN_TIMEOUT_MS:-300000}
+      - OA_GW_TTS_MAX_CONCURRENT_SYNTHESIS=${OA_GW_TTS_MAX_CONCURRENT_SYNTHESIS:-2}
+      - OA_GW_TTS_SEGMENT_MAX_CHARS=180
+      - OA_AUDIT_MODE=hash
+      - OA_AUDIT_DB_PATH=/app/services/gateway/data/audit.sqlite
+      - OA_AUTH_MODE=disabled
+      - OA_AUTH_TAGS_MODE=${OA_AUTH_TAGS_MODE:-disabled}
+      - OA_AUTH_TAGS=${OA_AUTH_TAGS:-}
+      - OA_AUTH_TAGS_CLAIM=${OA_AUTH_TAGS_CLAIM:-tags}
+      - OA_OIDC_REQUIRE_TAGS=${OA_OIDC_REQUIRE_TAGS:-false}
+      - OA_METRICS_TOKEN=${OA_METRICS_TOKEN:-}
+      - OA_ADMIN_TOKEN=${OA_ADMIN_TOKEN:-}
+      - OA_ASR_MODE=external
+      - OA_ASR_WS_URL=ws://asr:7002/asr
+      - OA_TTS_MODE=external
+      - OA_TTS_BASE_URL=http://tts:7003
+      - OA_MEDIA_MODE=external
+      - OA_MEDIA_BASE_URL=http://media:7004
+      - OA_RAG_MODE=external
+      - OA_RAG_BASE_URL=http://rag:7005
+      # Default to full OpenCode integration; set OA_LLM_MODE=mock to isolate ASR/TTS performance.
+      - OA_LLM_MODE=${OA_LLM_MODE:-opencode}
+      - OA_OPENCODE_BASE_URL=http://opencode:4096
+      - OA_OPENCODE_USERNAME=opencode
+      - OA_OPENCODE_PASSWORD=${OPENCODE_SERVER_PASSWORD:-opencode}
+      - OA_OPENCODE_EVENTS_MODE=${OA_OPENCODE_EVENTS_MODE:-sse}
+      - OA_OPENCODE_DIRECTORY=/app
+    ports:
+      - "7001:7001"
+    depends_on:
+      - asr
+      - tts
+      - media
+      - rag
+      - opencode
+
+  web:
+    image: oven/bun:1.3.6
+    working_dir: /app
+    volumes:
+      - ..:/app
+    command: bun run --cwd apps/web dev
+    environment:
+      - VITE_GATEWAY_PROXY_TARGET=http://gateway:7001
+      - VITE_TTS_MODE=audio
+    ports:
+      - "5173:5173"
+    depends_on:
+      - gateway
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - gateway
+
+  grafana:
+    image: grafana/grafana:11.5.0
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  media_data:
+  rag_data:
+  gateway_data:
+  grafana_data:
+  caddy_data:
+  caddy_config:
+  opencode_data:
+  opencode_config:
+  opencode_cache:
+  opencode_state:
+  cosyvoice_modelscope_cache:
