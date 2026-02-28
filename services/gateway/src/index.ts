@@ -375,7 +375,18 @@ async function proxyAsset(c: any) {
   const assetId = AssetID.parse(c.req.param("assetId") ?? "")
   const queryToken = c.req.query("token")
   const token = parseBearer(queryToken) ?? queryToken ?? parseBearer(c.req.header("authorization"))
-  const identity = await auth.authenticate(token)
+  let identity: Identity | undefined
+  try {
+    identity = await auth.authenticate(token)
+  } catch (err) {
+    audit("auth.http.asset_rejected", {
+      assetId,
+      reason: "auth_verify_failed",
+      detail: err instanceof Error ? err.message : String(err),
+      source: "gateway",
+    })
+    return c.json({ ok: false, error: "unauthorized" }, 401)
+  }
   if (!identity) return c.json({ ok: false, error: "unauthorized" }, 401)
 
   if (config.OA_MEDIA_MODE === "disabled") {
@@ -2048,9 +2059,19 @@ app.get("/readyz", async (c) => {
 app.all("/mcp", async (c) => {
   const queryToken = c.req.query("token")
   const token = parseBearer(queryToken) ?? queryToken ?? parseBearer(c.req.header("authorization"))
-  const identity = await auth.authenticate(token)
-  if (!identity) return c.json({ ok: false, error: "unauthorized" }, 401)
-  void identity
+  if (config.OA_OPENCODE_MCP_TOKEN) {
+    const accepted = new Set([config.OA_OPENCODE_MCP_TOKEN, config.OA_OPENCODE_MCP_TOKEN_PREVIOUS].filter(Boolean))
+    if (!token || !accepted.has(token)) return c.json({ ok: false, error: "unauthorized" }, 401)
+  } else if (config.OA_AUTH_MODE !== "disabled") {
+    return c.json(
+      {
+        ok: false,
+        error: "mcp_token_required",
+        detail: "Set OA_OPENCODE_MCP_TOKEN to protect /mcp when OA_AUTH_MODE != disabled",
+      },
+      503,
+    )
+  }
   return await mcpHandler(c.req.raw)
 })
 

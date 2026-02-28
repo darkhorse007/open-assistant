@@ -2,6 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 import { Ws } from "@open-assistant/protocol"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
+import { collectPerfMeta, sanitizeRunId } from "./perf-meta"
 
 type TurnResult = {
   sessionID: string
@@ -19,6 +20,41 @@ function pctl(values: number[], p: number) {
   const sorted = [...values].sort((a, b) => a - b)
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))
   return sorted[idx] ?? 0
+}
+
+function readEnvNumber(name: string): number | undefined {
+  const raw = process.env[name]
+  if (typeof raw !== "string") return
+  const s = raw.trim()
+  if (!s) return
+  const n = Number(s)
+  if (!Number.isFinite(n)) return
+  return n
+}
+
+function readEnvBool(name: string, defaultValue: boolean): boolean {
+  const raw = process.env[name]
+  if (typeof raw !== "string") return defaultValue
+  const s = raw.trim().toLowerCase()
+  if (!s) return defaultValue
+  return !(s === "0" || s === "false" || s === "no" || s === "off")
+}
+
+type SlaConfig = {
+  enabled: boolean
+  maxErrorRate: number
+  p95TtsTextMs?: number
+  p95FirstAudioMs?: number
+  p95TurnTotalMs?: number
+  p95InterruptMs?: number
+  requireInterrupts: boolean
+}
+
+type SlaResult = {
+  enabled: boolean
+  ok: boolean
+  failures: string[]
+  config: SlaConfig
 }
 
 function now() {
@@ -328,6 +364,7 @@ async function runOneSession(opts: {
 }
 
 async function main() {
+  const runId = sanitizeRunId(process.env.OA_PERF_RUN_ID ?? String(Date.now()))
   const spawnStack = process.env.OA_PERF_SPAWN_STACK === "1"
   const wsUrl = process.env.OA_PERF_GATEWAY_WS_URL ?? "ws://127.0.0.1:7001/ws"
   const sessions = Number(process.env.OA_PERF_SESSIONS ?? "10")
@@ -368,7 +405,7 @@ async function main() {
     }
 
     log(
-      `Perf: sessions=${sessions} turnsPerSession=${turnsPerSession} speakRatio=${speakRatio.toFixed(2)} interruptProb=${interruptProb.toFixed(2)} ws=${wsUrl}`,
+      `Perf: runId=${runId} sessions=${sessions} turnsPerSession=${turnsPerSession} speakRatio=${speakRatio.toFixed(2)} interruptProb=${interruptProb.toFixed(2)} ws=${wsUrl}`,
     )
 
     const all: TurnResult[] = []
@@ -427,7 +464,54 @@ async function main() {
     log(`turn total ms: p50=${pctl(total, 50).toFixed(0)} p95=${pctl(total, 95).toFixed(0)} (n=${total.length})`)
     log(`interrupt ms: p50=${pctl(interruptMs, 50).toFixed(0)} p95=${pctl(interruptMs, 95).toFixed(0)} (n=${interruptMs.length})`)
 
+    const readFirstNumber = (names: string[]) => {
+      for (const name of names) {
+        const v = readEnvNumber(name)
+        if (v !== undefined) return v
+      }
+      return undefined
+    }
+
+    const slaConfig: SlaConfig = {
+      enabled: readEnvBool("OA_PERF_ASSERT", false),
+      maxErrorRate: readEnvNumber("OA_PERF_MAX_ERROR_RATE") ?? 0,
+      p95TtsTextMs: readFirstNumber(["OA_PERF10_P95_TTS_TEXT_MS", "OA_PERF_P95_TTS_TEXT_MS"]),
+      p95FirstAudioMs: readFirstNumber(["OA_PERF10_P95_FIRST_AUDIO_MS", "OA_PERF_P95_FIRST_AUDIO_MS"]),
+      p95TurnTotalMs: readFirstNumber(["OA_PERF10_P95_TURN_TOTAL_MS", "OA_PERF_P95_TURN_TOTAL_MS"]),
+      p95InterruptMs: readFirstNumber(["OA_PERF10_P95_INTERRUPT_MS", "OA_PERF_P95_INTERRUPT_MS"]),
+      requireInterrupts: readEnvBool("OA_PERF10_REQUIRE_INTERRUPTS", readEnvBool("OA_PERF_REQUIRE_INTERRUPTS", false)),
+    }
+
+    const sla: SlaResult = (() => {
+      const failures: string[] = []
+      if (!slaConfig.enabled) return { enabled: false, ok: true, failures, config: slaConfig }
+
+      const errorRate = errors.length / Math.max(1, all.length)
+      if (errorRate > slaConfig.maxErrorRate) {
+        failures.push(`errorRate ${errorRate.toFixed(4)} > ${slaConfig.maxErrorRate.toFixed(4)}`)
+      }
+
+      const checkP95 = (name: string, values: number[], limit: number | undefined) => {
+        if (limit === undefined) return
+        if (values.length === 0) return failures.push(`${name}.p95 missing (n=0), expected <= ${limit}`)
+        const v = pctl(values, 95)
+        if (v > limit) failures.push(`${name}.p95 ${v.toFixed(0)}ms > ${limit.toFixed(0)}ms`)
+      }
+
+      checkP95("tts.text", ttsText, slaConfig.p95TtsTextMs)
+      checkP95("tts.audio.first", firstAudio, slaConfig.p95FirstAudioMs)
+      checkP95("turn.total", total, slaConfig.p95TurnTotalMs)
+      checkP95("interrupt", interruptMs, slaConfig.p95InterruptMs)
+
+      if (slaConfig.requireInterrupts && interruptMs.length === 0) {
+        failures.push("requireInterrupts enabled but no interrupted turns observed")
+      }
+
+      return { enabled: true, ok: failures.length === 0, failures, config: slaConfig }
+    })()
+
     const report = {
+      meta: collectPerfMeta({ runId }),
       ts: new Date().toISOString(),
       config: { wsUrl, sessions, turnsPerSession, delayMs, speakRatio, interruptProb, interruptDelayMs, turnTimeoutMs },
       summary: {
@@ -441,12 +525,27 @@ async function main() {
         total: { p50: pctl(total, 50), p95: pctl(total, 95), n: total.length },
         interrupt: { p50: pctl(interruptMs, 50), p95: pctl(interruptMs, 95), n: interruptMs.length },
       },
+      assert: sla,
       results: all,
     }
 
-    const outFile = path.join(ROOT, "test-results", `perf-report-${Date.now()}.json`)
+    const outFile = path.join(ROOT, "test-results", `perf-report-${runId}.json`)
     writeJson(outFile, report)
     log(`Report written: ${outFile}`)
+
+    if (sla.enabled) {
+      if (sla.ok) {
+        log("SLA: OK")
+      } else {
+        // eslint-disable-next-line no-console
+        console.error(`SLA: FAILED (${sla.failures.length})`)
+        for (const f of sla.failures) {
+          // eslint-disable-next-line no-console
+          console.error(`- ${f}`)
+        }
+        process.exit(2)
+      }
+    }
   } finally {
     for (const p of procs.reverse()) await killProc(p.proc)
   }

@@ -32,6 +32,8 @@ export const Config = z.object({
   OA_AUTH_TAGS_CLAIM: z.string().min(1).default("tags"),
   OA_METRICS_TOKEN: z.string().min(1).optional(),
   OA_ADMIN_TOKEN: z.string().min(1).optional(),
+  OA_OPENCODE_MCP_TOKEN: z.string().min(1).optional(),
+  OA_OPENCODE_MCP_TOKEN_PREVIOUS: z.string().min(1).optional(),
 
   OA_ASR_MODE: z.enum(["mock", "external", "disabled"]).default("mock"),
   OA_ASR_WS_URL: z.string().url().default("ws://127.0.0.1:7002/asr"),

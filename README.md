@@ -14,6 +14,7 @@ Open Assistant 是一个“纯内网”的语音数字人助手项目：浏览�
 - `services/tts-mock/`：TTS mock（用于本地开发与 e2e）
 - `packages/protocol/`：WS 协议与工具 schema（Zod）
 - `docs/`：技术方案与可执行 Backlog
+- `docs/PRODUCTION_ROADMAP.md`：生产可用推进路线（Keycloak/OIDC + 多租户 tags + 断网运行）
 - `.opencode/`：OpenCode agent 配置（供 OpenCode Server 加载）
 - `opencode.jsonc`：OpenCode 项目级配置（权限/MCP 等）
 
@@ -138,6 +139,7 @@ cp .env.example .env
   - `OA_OIDC_ISSUER/OA_OIDC_AUDIENCE/OA_OIDC_JWKS_URL`（`OA_AUTH_MODE=oidc` 时使用）
   - `OA_AUTH_SUB_CLAIM/OA_AUTH_TENANT_CLAIM/OA_AUTH_PROJECT_CLAIM`（OIDC claim 映射，默认 `sub/tenant/project`）
   - `OA_OPENCODE_MCP_TOKEN`（当 `OA_AUTH_MODE != disabled` 时，OpenCode Server 调用 Gateway `/mcp` 需要带的 token）
+  - `OA_OPENCODE_MCP_TOKEN_PREVIOUS`（可选：`/mcp` 旧 token；用于平滑轮换，允许短暂双 token 并存）
   - `OA_METRICS_TOKEN`（可选：保护 Gateway `/metrics`）
   - `OA_ADMIN_TOKEN`（可选：保护 Gateway `/audit/*`、`/admin/api/*`、`/admin/assets/*`；未设置则兼容复用 `OA_METRICS_TOKEN`；同时作为 Media/RAG 管理接口的回退 token）
   - `OA_AUTH_TAGS_MODE`（默认 `disabled`；可设为 `enforce`，让 `rag.search/asset.search` 自动注入 tags 并限制越权检索）
@@ -148,6 +150,9 @@ cp .env.example .env
 
 - `VITE_GATEWAY_WS_URL`（默认 `ws://localhost:7001/ws`）
 - `VITE_OA_TOKEN`（可选：默认注入到 Web 的 token；也可以直接在页面里填写后 Connect）
+- （可选）`VITE_OA_OIDC_ISSUER` / `VITE_OA_OIDC_CLIENT_ID`（Keycloak OIDC；Web 侧将启用 Auth Code + PKCE 登录）
+- （可选）`VITE_OA_OIDC_SCOPE`（默认 `openid profile email`）
+- （可选）`VITE_OA_OIDC_REDIRECT_URI`（默认取当前页面 URL（不含 query/hash））
 
 ### Media（`services/media`）（可选：真实素材服务）
 

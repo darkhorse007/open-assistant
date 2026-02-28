@@ -56,6 +56,43 @@ cd open-assistant
 cp infra/.env.example infra/.env
 ```
 
+### 可选：Keycloak（OIDC 登录联调）
+
+如果你们暂时还没有现成的 OIDC/SSO，可先用本仓库提供的 Keycloak overlay 快速跑通“Web 登录 -> WS 鉴权 -> 多租户 claims”全链路。
+更完整说明见：`infra/keycloak/README.md`。
+
+启动 Keycloak（可与 full/prod 叠加使用）：
+
+```bash
+cd open-assistant
+docker compose -f infra/docker-compose.full.yml -f infra/docker-compose.full.keycloak.yml up -d keycloak
+```
+
+默认导入 realm：`openassistant`，并创建 demo 用户：`demo/demo`（含属性：`tenant/project/tags`，见 `infra/keycloak/realm-openassistant.json`）。
+
+备份/恢复建议见：`infra/keycloak/README.md`（含 `backup-db.sh` / `restore-db.sh`）。
+
+建议在 `infra/.env` 配置（注意 `/mcp` token 在启用鉴权时是必需的）：
+
+```bash
+OA_AUTH_MODE=oidc
+OA_OIDC_ISSUER=http://host.docker.internal:8080/realms/openassistant
+# OA_OIDC_AUDIENCE=open-assistant-web
+OA_AUTH_TAGS_MODE=enforce
+OA_OIDC_REQUIRE_TAGS=true
+OA_OPENCODE_MCP_TOKEN=change-me
+# OA_OPENCODE_MCP_TOKEN_PREVIOUS=old-token-during-rotation
+```
+
+`/mcp` token 轮换与网络隔离策略请见：`infra/SECURITY_MCP_OIDC.md`。
+
+Web 侧（Vite dev）配置示例（`apps/web/.env`；或在 docker compose 环境中直接写到 `infra/.env` 的 `VITE_*` 变量）：
+
+```bash
+VITE_OA_OIDC_ISSUER=http://host.docker.internal:8080/realms/openassistant
+VITE_OA_OIDC_CLIENT_ID=open-assistant-web
+```
+
 准备目录（FunASR 模型缓存 + 热词文件）：
 
 ```bash
@@ -86,6 +123,7 @@ bun run ops:full:up
 
 > 说明：当 `OA_FULL_COMPOSE_MODE=prod` 且未开启 `OA_FULL_BUILD=1` 时，脚本默认以“断网运行”方式启动（等价于 `docker compose up -d --pull never --no-build`）。
 > 如需覆盖可使用：`OA_FULL_PULL=missing|always|never`、`OA_FULL_NO_BUILD=1`。
+> 可选：设置 `OA_FULL_KEYCLOAK=1` 会额外叠加 Keycloak overlay（`infra/docker-compose.full.keycloak.yml`）。
 
 说明：
 - FunASR：默认暴露 `ws://localhost:10096`（容器内 `10095`）
@@ -138,6 +176,13 @@ OA_FULL_COMPOSE_MODE=prod OA_FULL_GPU=1 bun run ops:full:up
 ```
 
 > 如果断网后 `readyz` 仍失败，通常是：模型没缓存完整/镜像未提前拉取。可在联网阶段重复第 1 步直到 `readyz` 稳定通过。
+
+### Staging 联调与 perf 留证（OA-OPS-105）
+
+如需把“真实依赖 + 低并发先跑通 + 可追溯留证”固化为发布证据，请参考：
+
+- `infra/STAGING.md`（命令、最小参数集、留证文件与回滚策略）
+- `infra/.env.staging.example`（staging 环境变量模板）
 
 ### Ubuntu 主机一键部署脚本（推荐）
 

@@ -1,6 +1,6 @@
 ﻿# Open Assistant 可执行 Backlog（对齐 OpenCode 技术栈）
 
-> 更新时间：2026-02-02  
+> 更新时间：2026-02-28  
 > 参考：`open-assistant/docs/TECHNICAL_SOLUTION.md`
 
 本文件把《技术方案》落成可执行的交付 Backlog（按 Phase/Epic/Story 拆分），用于直接录入 Jira/Linear/飞书项目等。
@@ -410,6 +410,20 @@
   - 有抑制策略避免误触发（最小：冷却时间 + 音量阈值）
   - 可配置开关（在嘈杂环境可关闭自动打断）
 
+#### OA-WEB-105 Web 侧 OIDC 登录（Auth Code + PKCE）与 token 生命周期
+- 优先级：P1｜估时：2–4d｜负责人：FE+BE
+- 依赖：OA-AUTH-101，OA-OPS-106
+- 状态：✅ 已落地（2026-02-28）：Keycloak OIDC（Auth Code + PKCE）登录/登出/刷新闭环（`apps/web/src/oidc.ts`，`apps/web/src/ui/App.tsx`，`apps/web/.env.example`，`README.md`）
+- 产出：
+  - Web 侧“登录/登出/刷新”闭环（Keycloak OIDC：Auth Code + PKCE）
+  - Token 存储策略说明（默认 sessionStorage；明确禁止 localStorage 的场景与原因）
+  - OIDC 配置模板（issuer/clientId/redirectUri/scope）与 Keycloak Web Origins 配置说明
+- 验收：
+  - 登录成功后，Web 自动把 `Authorization: Bearer <access_token>` 以 `?token=` 方式带到 `/ws` 与 `/assets/:assetId`
+  - access_token 过期前可自动刷新（refresh_token），刷新失败会清理本地状态并提示重新登录
+  - 支持登出（清理本地 token，并可选跳转到 OIDC end_session_endpoint）
+  - UI 可展示解析后的 `sub/tenant/project/tags`（仅用于调试展示，不作为鉴权依据）
+
 #### OA-WEB-102 CSP 落地与资源隔离（slides/3D sandbox）
 - 优先级：P0｜估时：2–3d｜负责人：FE+Sec
 - 依赖：OA-FOUND-003，OA-MEDIA-102
@@ -466,6 +480,20 @@
   - 提供可重复的 e2e 测试（mock ASR/TTS 亦可）
   - 覆盖关键用例：interrupt 必须停止播放与 abort 成功
 
+#### OA-TEST-102 发布门禁（CI gate：typecheck + RC2/RC3 + e2e + staging perf 留证）
+- 优先级：P1｜估时：1–2d｜负责人：BE+Ops
+- 依赖：OA-TEST-101，OA-PERF-101，OA-PERF-102，OA-OPS-104
+- 状态：✅ 已落地（2026-02-28）：GitHub Actions CI gate（typecheck + RC2/RC3 负例 + e2e）（`.github/workflows/ci.yml`）
+- 产出：
+  - CI 流水线（或等价发布 gate）：
+    - 必跑：`bun run typecheck`、`bun run test:rc2rc3`、`bun run test:e2e`
+    - 一键命令：`bun run gate:release`（可本机用 `OA_GATE_SKIP_E2E=1` 调试）
+    - staging（真依赖）可选/手动 gate：`bun run ops:full:up-perf:all` 并保存 perf 报告
+  - 失败阻断策略与留证路径（`open-assistant/test-results/` 作为默认产物目录）
+- 验收：
+  - typecheck/e2e 失败会阻断合入或发布
+  - staging perf 报告可追溯到 commit（包含时间戳/版本信息/环境参数）
+
 #### OA-PERF-101 10 路并发压测脚本与报告
 - 优先级：P0｜估时：2–4d｜负责人：BE+Ops
 - 依赖：OA-GW-101，OA-GW-104
@@ -519,6 +547,30 @@
   - 断网后 `docker compose -f infra/docker-compose.full.yml -f infra/docker-compose.prod.yml up -d` 可启动（不依赖源码挂载/在线安装）
   - Runbook 明确“初始化联网阶段预热模型/依赖”的流程（`infra/README.md`）
   - 可选：`OA_FULL_MOCK_BACKENDS=1` 跳过 FunASR/CosyVoice，仍能通过 `/readyz` 与管理后台审计链路验收
+
+#### OA-OPS-105 staging 真实依赖联调与 perf 留证（发布证据）
+- 优先级：P1｜估时：1–2d｜负责人：Ops+BE
+- 依赖：OA-OPS-104，OA-PERF-101，OA-PERF-102
+- 状态：✅ 已落地（2026-02-28）：已执行真依赖生产形态联调与留证：`OA_FULL_COMPOSE_MODE=prod OA_FULL_BUILD=1 OA_GRAFANA_PORT=3300 bun run ops:full:up-perf:all`；runId=`1772263423939`；产物：`test-results/perf-evidence-1772263423939.json`、`test-results/perf-report-1772263423939.json`、`test-results/perf-asrtts-report-1772263423939.json`（`readyz` 全绿，错误率 0）。
+- 产出：
+  - staging 环境“一键联调”命令与最小参数集（低并发先跑通）
+  - `test-results/perf-report-*.json`（真依赖）作为发布证据（包含环境信息/版本）
+  - 已知问题清单与回滚策略（比如模型下载失败、冷启动超时）
+- 验收：
+  - `OA_FULL_COMPOSE_MODE=prod OA_FULL_BUILD=1 ... bun run ops:full:up-perf:all` 在 staging 可稳定跑通并生成报告
+  - 报告错误率为 0（或有明确可复现的已知问题与修复计划）
+
+#### OA-OPS-106 Keycloak 部署与备份（Realm/Client 初始化脚本 + 升级策略）
+- 优先级：P1｜估时：2–4d｜负责人：Ops+Sec
+- 依赖：OA-AUTH-101
+- 状态：✅ 已落地（2026-02-28）：Keycloak overlay + realm import + 运维脚本（`infra/docker-compose.full.keycloak.yml`，`infra/keycloak/realm-openassistant.json`，`infra/keycloak/README.md`，`infra/keycloak/backup-db.sh`，`infra/keycloak/restore-db.sh`，`scripts/full-stack.ts`）
+- 产出：
+  - Keycloak 部署方式定版（容器/Helm/HA 可选其一）与运行手册（断网可用）
+  - Realm/Client 初始化脚本（包含：Web Client + Gateway audience/claims 约定）
+  - 备份/恢复/升级策略（Realm 导出、DB 备份、证书与密钥轮换）
+- 验收：
+  - Keycloak 在内网可用，OIDC discovery/jwks 可访问
+  - 可一键重建 realm/client，并能签发包含 `tenant/project/tags` 的 access token（通过协议 mapper）
 
 ### Epic OA-E15：鉴权与多租户（MVP 建议）
 
