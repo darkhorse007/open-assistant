@@ -1,6 +1,10 @@
 import { test, expect } from "@playwright/test"
 
 test("Open Assistant smoke: present video/slides/model", async ({ page }) => {
+  const token = process.env.OA_E2E_AUTH_TOKEN?.trim()
+  if (token) {
+    await page.addInitScript((t) => sessionStorage.setItem("oa_token", t), token)
+  }
   await page.goto("/")
 
   await expect(page.getByText("Open Assistant")).toBeVisible()

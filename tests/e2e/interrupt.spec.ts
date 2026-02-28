@@ -11,6 +11,10 @@ async function readText(locator: Locator) {
 }
 
 test("Open Assistant: speak -> interrupt -> speak again", async ({ page }) => {
+  const token = process.env.OA_E2E_AUTH_TOKEN?.trim()
+  if (token) {
+    await page.addInitScript((t) => sessionStorage.setItem("oa_token", t), token)
+  }
   await page.goto("/")
 
   await expect(page.getByTestId("ws-status")).toHaveText("connected")

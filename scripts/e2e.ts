@@ -23,6 +23,8 @@ const PLAYWRIGHT_BIN = (() => {
   return "playwright"
 })()
 const expectedExit = new Set<number>()
+const DEFAULT_E2E_AUTH_TOKEN = "e2e-auth-token"
+const DEFAULT_E2E_MCP_TOKEN = "e2e-mcp-token"
 
 function log(message: string) {
   // eslint-disable-next-line no-console
@@ -91,9 +93,13 @@ async function kill(proc: Proc) {
 
 async function main() {
   const procs: Array<{ name: string; proc: Proc }> = []
+  const e2eAuthMode = (process.env.OA_E2E_AUTH_MODE ?? "static").trim() as "disabled" | "static" | "oidc"
+  const e2eAuthToken = (process.env.OA_E2E_AUTH_TOKEN ?? DEFAULT_E2E_AUTH_TOKEN).trim()
+  const e2eMcpToken = (process.env.OA_E2E_MCP_TOKEN ?? DEFAULT_E2E_MCP_TOKEN).trim()
+  const gatewayBaseUrl = (process.env.OA_E2E_GATEWAY_BASE_URL ?? "http://127.0.0.1:7001").trim().replace(/\/+$/, "")
 
   try {
-    log("Starting stack (mocks + gateway + web)…")
+    log(`Starting stack (mocks + gateway + web)… auth=${e2eAuthMode}`)
 
     const asr = spawn("asr-mock", [BUN_BIN, "run", "dev:asr"], ROOT)
     procs.push({ name: "asr-mock", proc: asr })
@@ -111,11 +117,23 @@ async function main() {
     procs.push({ name: "rag-mock", proc: rag })
     await waitForHttp("http://127.0.0.1:7005/healthz", { timeoutMs: 20_000 })
 
-    const gw = spawn("gateway", [BUN_BIN, "run", "dev:gateway"], ROOT, { ...process.env, OA_LLM_MODE: "mock" })
+    const gwEnv: Record<string, string | undefined> = {
+      ...process.env,
+      OA_LLM_MODE: "mock",
+      OA_AUTH_MODE: e2eAuthMode,
+      OA_AUTH_TOKEN: e2eAuthMode === "static" ? e2eAuthToken : process.env.OA_AUTH_TOKEN,
+      OA_OPENCODE_MCP_TOKEN: e2eMcpToken,
+    }
+    if (e2eAuthMode === "disabled") delete gwEnv.OA_AUTH_TOKEN
+
+    const gw = spawn("gateway", [BUN_BIN, "run", "dev:gateway"], ROOT, gwEnv)
     procs.push({ name: "gateway", proc: gw })
     await waitForHttp("http://127.0.0.1:7001/healthz", { timeoutMs: 20_000 })
 
-    const web = spawn("web", [BUN_BIN, "run", "dev:web"], ROOT)
+    const web = spawn("web", [BUN_BIN, "run", "dev:web"], ROOT, {
+      ...process.env,
+      VITE_OA_TOKEN: e2eAuthMode === "static" ? e2eAuthToken : process.env.VITE_OA_TOKEN,
+    })
     procs.push({ name: "web", proc: web })
     await waitForHttp("http://127.0.0.1:5173", { timeoutMs: 40_000 })
 
@@ -124,7 +142,14 @@ async function main() {
       cwd: ROOT,
       stdout: "inherit",
       stderr: "inherit",
-      env: { ...process.env, OA_E2E_BASE_URL: "http://127.0.0.1:5173" },
+      env: {
+        ...process.env,
+        OA_E2E_BASE_URL: "http://127.0.0.1:5173",
+        OA_E2E_GATEWAY_BASE_URL: gatewayBaseUrl,
+        OA_E2E_AUTH_MODE: e2eAuthMode,
+        OA_E2E_AUTH_TOKEN: e2eAuthToken,
+        OA_E2E_MCP_TOKEN: e2eMcpToken,
+      },
     })
     const code = (await pw.exited) ?? 1
     if (code !== 0) process.exitCode = code

@@ -4,6 +4,7 @@ dist/
 .env.*
 !.env.example
 !infra/.env.example
+!infra/.env.staging.example
 *.log
 .DS_Store
 .vendor-tmp/
@@ -15,3 +16,4 @@ test-results/
 
 # Large local model artifacts (keep out of git history)
 infra/funasr-runtime-resources/models/
+infra/keycloak/backups/

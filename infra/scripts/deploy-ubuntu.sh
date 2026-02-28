@@ -30,6 +30,7 @@ Environment overrides:
   OA_DEPLOY_MODE=mock|real                    # default: mock
   OA_DEPLOY_COMPOSE_MODE=prod|dev             # default: prod
   OA_DEPLOY_USE_GPU=1|0                       # default: 1
+  OA_DEPLOY_WITH_KEYCLOAK=1|0                 # default: 0
   OA_DEPLOY_BUILD=1|0                         # default: 1 (only for prod)
   OA_DEPLOY_LLM_MODE=mock|opencode            # default: mock
   OA_DEPLOY_READY_URL=http://127.0.0.1:7001/readyz
@@ -58,6 +59,7 @@ INFRA_DIR="$OA_ROOT/infra"
 MODE="${OA_DEPLOY_MODE:-mock}"
 COMPOSE_MODE="${OA_DEPLOY_COMPOSE_MODE:-prod}"
 USE_GPU="${OA_DEPLOY_USE_GPU:-1}"
+WITH_KEYCLOAK="${OA_DEPLOY_WITH_KEYCLOAK:-0}"
 BUILD_IMAGES="${OA_DEPLOY_BUILD:-1}"
 LLM_MODE="${OA_DEPLOY_LLM_MODE:-mock}"
 READY_URL="${OA_DEPLOY_READY_URL:-http://127.0.0.1:7001/readyz}"
@@ -71,6 +73,7 @@ CUDA_TEST_IMAGE="${OA_DEPLOY_CUDA_TEST_IMAGE:-nvidia/cuda:12.3.2-runtime-ubuntu2
 [[ "$MODE" == "mock" || "$MODE" == "real" ]] || die "OA_DEPLOY_MODE must be mock|real"
 [[ "$COMPOSE_MODE" == "prod" || "$COMPOSE_MODE" == "dev" ]] || die "OA_DEPLOY_COMPOSE_MODE must be prod|dev"
 [[ "$USE_GPU" == "0" || "$USE_GPU" == "1" ]] || die "OA_DEPLOY_USE_GPU must be 0|1"
+[[ "$WITH_KEYCLOAK" == "0" || "$WITH_KEYCLOAK" == "1" ]] || die "OA_DEPLOY_WITH_KEYCLOAK must be 0|1"
 
 need_cmd docker
 need_cmd curl
@@ -108,6 +111,7 @@ compose_files=("$INFRA_DIR/docker-compose.full.yml")
 [[ "$COMPOSE_MODE" == "prod" ]] && compose_files+=("$INFRA_DIR/docker-compose.prod.yml")
 [[ "$USE_GPU" == "1" ]] && compose_files+=("$INFRA_DIR/docker-compose.gpu.yml")
 [[ "$MODE" == "mock" ]] && compose_files+=("$INFRA_DIR/docker-compose.full.mock-backends.yml")
+[[ "$WITH_KEYCLOAK" == "1" ]] && compose_files+=("$INFRA_DIR/docker-compose.full.keycloak.yml")
 
 compose_args=()
 for f in "${compose_files[@]}"; do
@@ -194,4 +198,3 @@ case "$ACTION" in
     die "unsupported action: $ACTION"
     ;;
 esac
-

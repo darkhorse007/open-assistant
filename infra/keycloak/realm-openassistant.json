@@ -1,0 +1,93 @@
+{
+  "realm": "openassistant",
+  "enabled": true,
+  "displayName": "Open Assistant",
+  "clients": [
+    {
+      "clientId": "open-assistant-web",
+      "name": "Open Assistant Web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*",
+        "https://localhost:7443/*",
+        "https://127.0.0.1:7443/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://localhost:7443",
+        "https://127.0.0.1:7443"
+      ],
+      "protocolMappers": [
+        {
+          "name": "tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "claim.name": "tenant",
+            "id.token.claim": "false",
+            "jsonType.label": "String",
+            "user.attribute": "tenant",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "project",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "claim.name": "project",
+            "id.token.claim": "false",
+            "jsonType.label": "String",
+            "user.attribute": "project",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "tags",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "claim.name": "tags",
+            "id.token.claim": "false",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "user.attribute": "tags",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "demo", "temporary": false }
+      ],
+      "attributes": {
+        "tenant": ["default"],
+        "project": ["open-assistant"],
+        "tags": ["demo", "dept-a"]
+      }
+    }
+  ]
+}
+

@@ -1,5 +1,17 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import type { Ws } from "@open-assistant/protocol"
+import {
+  buildAuthorizeUrl,
+  decodeJwtPayload,
+  discoverOidc,
+  exchangeCode,
+  randomBase64Url,
+  refreshTokens,
+  sha256Base64Url,
+  type OidcConfig,
+  type OidcDiscoveryDocument,
+  type OidcTokens,
+} from "../oidc"
 
 const VisemeValues = ["sil", "PP", "FF", "TH", "DD", "kk", "CH", "SS", "nn", "RR", "aa", "E", "ih", "oh", "ou"] as const satisfies readonly Ws.Viseme[]
 const VisemeValueSet = new Set<string>(VisemeValues)
@@ -127,6 +139,48 @@ export function App() {
   const [micStatus, setMicStatus] = createSignal<"off" | "on">("off")
   const [ttsMode, setTtsMode] = createSignal<"audio" | "speech">(import.meta.env.VITE_TTS_MODE ?? "audio")
   const [authToken, setAuthToken] = createSignal<string>(sessionStorage.getItem("oa_token") ?? import.meta.env.VITE_OA_TOKEN ?? "")
+
+  const oidcIssuer = (import.meta.env.VITE_OA_OIDC_ISSUER ?? "").trim()
+  const oidcClientId = (import.meta.env.VITE_OA_OIDC_CLIENT_ID ?? "").trim()
+  const oidcScope = ((import.meta.env.VITE_OA_OIDC_SCOPE ?? "openid profile email").trim() || "openid profile email").trim()
+  const oidcRedirectUri = (() => {
+    const explicit = (import.meta.env.VITE_OA_OIDC_REDIRECT_URI ?? "").trim()
+    if (explicit) return explicit
+    try {
+      const url = new URL(window.location.href)
+      url.search = ""
+      url.hash = ""
+      return url.toString()
+    } catch {
+      return window.location.origin
+    }
+  })()
+  const oidcConfig: OidcConfig | undefined =
+    oidcIssuer && oidcClientId
+      ? { issuer: oidcIssuer, clientId: oidcClientId, redirectUri: oidcRedirectUri, scope: oidcScope }
+      : undefined
+
+  const [oidcDoc, setOidcDoc] = createSignal<OidcDiscoveryDocument | undefined>(undefined)
+  const [oidcTokens, setOidcTokens] = createSignal<OidcTokens | undefined>(undefined)
+  const [oidcError, setOidcError] = createSignal<string>("")
+  const [oidcWorking, setOidcWorking] = createSignal<boolean>(false)
+  const oidcClaims = createMemo(() => {
+    const t = oidcTokens()?.accessToken
+    return t ? decodeJwtPayload(t) : undefined
+  })
+  const oidcDebugScope = createMemo(() => {
+    const c = oidcClaims()
+    if (!c) return undefined
+    const sub = typeof c.sub === "string" ? c.sub : ""
+    const tenant = typeof c.tenant === "string" ? c.tenant : ""
+    const project = typeof c.project === "string" ? c.project : ""
+    const tags = Array.isArray(c.tags)
+      ? c.tags.filter((t) => typeof t === "string").join(",")
+      : typeof c.tags === "string"
+        ? c.tags
+        : ""
+    return { sub, tenant, project, tags }
+  })
   const [presentSrc, setPresentSrc] = createSignal<string>("")
   const [presentAssetId, setPresentAssetId] = createSignal<string>("")
   const [presentAssetType, setPresentAssetType] = createSignal<Ws.PresentAssetType>("video")
@@ -220,6 +274,7 @@ export function App() {
   let videoEl: HTMLVideoElement | undefined
   let modelFrameEl: HTMLIFrameElement | undefined
   let lastModelLipsyncPerfMs = 0
+  let oidcRefreshTimer: ReturnType<typeof setTimeout> | undefined
 
   function sendModelMorphMap() {
     const win = modelFrameEl?.contentWindow
@@ -256,6 +311,239 @@ export function App() {
     else sessionStorage.removeItem("oa_token")
   })
 
+  async function ensureOidcDoc() {
+    if (!oidcConfig) throw new Error("OIDC not configured (missing VITE_OA_OIDC_ISSUER/VITE_OA_OIDC_CLIENT_ID)")
+    const cached = oidcDoc()
+    if (cached) return cached
+    const doc = await discoverOidc(oidcConfig.issuer)
+    setOidcDoc(doc)
+    return doc
+  }
+
+  function clearOidcSession(opts?: { keepToken?: boolean }) {
+    if (oidcRefreshTimer) clearTimeout(oidcRefreshTimer)
+    oidcRefreshTimer = undefined
+    setOidcTokens(undefined)
+    try {
+      sessionStorage.removeItem("oa_oidc_tokens")
+      sessionStorage.removeItem("oa_oidc_pkce")
+    } catch {
+      // ignore
+    }
+    if (!opts?.keepToken) setAuthToken("")
+  }
+
+  function storeOidcTokens(tokens: OidcTokens) {
+    setOidcTokens(tokens)
+    try {
+      sessionStorage.setItem("oa_oidc_tokens", JSON.stringify(tokens))
+    } catch {
+      // ignore
+    }
+    setAuthToken(`Bearer ${tokens.accessToken}`)
+  }
+
+  function scheduleOidcRefresh(tokens: OidcTokens) {
+    if (oidcRefreshTimer) clearTimeout(oidcRefreshTimer)
+    oidcRefreshTimer = undefined
+
+    if (!oidcConfig) return
+    if (!tokens.refreshToken) return
+
+    const now = Date.now()
+    const msLeft = tokens.expiresAtMs - now
+    if (!Number.isFinite(msLeft) || msLeft <= 0) return
+
+    if (tokens.refreshExpiresAtMs && tokens.refreshExpiresAtMs - now < 60_000) return
+
+    const leeway = clamp(Math.floor(msLeft * 0.1), 5_000, 60_000)
+    const delay = Math.max(1000, msLeft - leeway)
+    oidcRefreshTimer = setTimeout(() => {
+      oidcRefreshTimer = undefined
+      void oidcRefreshNow()
+    }, delay)
+  }
+
+  function parseStoredOidcTokens(raw: string): OidcTokens | undefined {
+    try {
+      const json = JSON.parse(raw) as any
+      if (!json || typeof json !== "object") return undefined
+      if (typeof json.accessToken !== "string" || !json.accessToken.trim()) return undefined
+      if (typeof json.obtainedAtMs !== "number" || !Number.isFinite(json.obtainedAtMs)) return undefined
+      if (typeof json.expiresAtMs !== "number" || !Number.isFinite(json.expiresAtMs)) return undefined
+      const refreshToken = typeof json.refreshToken === "string" && json.refreshToken.trim() ? json.refreshToken : undefined
+      const idToken = typeof json.idToken === "string" && json.idToken.trim() ? json.idToken : undefined
+      const tokenType = typeof json.tokenType === "string" && json.tokenType.trim() ? json.tokenType : undefined
+      const scope = typeof json.scope === "string" && json.scope.trim() ? json.scope : undefined
+      const refreshExpiresAtMs =
+        typeof json.refreshExpiresAtMs === "number" && Number.isFinite(json.refreshExpiresAtMs) ? json.refreshExpiresAtMs : undefined
+      return {
+        accessToken: json.accessToken,
+        refreshToken,
+        idToken,
+        tokenType,
+        scope,
+        obtainedAtMs: json.obtainedAtMs,
+        expiresAtMs: json.expiresAtMs,
+        refreshExpiresAtMs,
+      }
+    } catch {
+      return undefined
+    }
+  }
+
+  async function oidcLogin() {
+    if (!oidcConfig) return
+    setOidcError("")
+    setOidcWorking(true)
+    try {
+      const doc = await ensureOidcDoc()
+      const codeVerifier = randomBase64Url(32)
+      const codeChallenge = await sha256Base64Url(codeVerifier)
+      const state = randomBase64Url(16)
+      try {
+        sessionStorage.setItem("oa_oidc_pkce", JSON.stringify({ state, codeVerifier, createdAtMs: Date.now() }))
+      } catch {
+        // ignore
+      }
+      const url = buildAuthorizeUrl(doc, oidcConfig, { state, codeChallenge })
+      window.location.assign(url)
+    } catch (err) {
+      setOidcError(err instanceof Error ? err.message : String(err))
+      setOidcWorking(false)
+    }
+  }
+
+  async function oidcHandleCallback() {
+    if (!oidcConfig) return false
+    const url = new URL(window.location.href)
+    const code = url.searchParams.get("code") ?? ""
+    const state = url.searchParams.get("state") ?? ""
+    const error = url.searchParams.get("error") ?? ""
+    const errorDescription = url.searchParams.get("error_description") ?? ""
+    if (!code && !error) return false
+
+    setOidcError("")
+    setOidcWorking(true)
+    try {
+      const cleaned = new URL(window.location.href)
+      for (const k of ["code", "state", "session_state", "error", "error_description", "iss"]) cleaned.searchParams.delete(k)
+      window.history.replaceState({}, "", cleaned.toString())
+
+      if (error) throw new Error(`OIDC login failed (${error})${errorDescription ? `: ${errorDescription}` : ""}`)
+
+      const pkceRaw = sessionStorage.getItem("oa_oidc_pkce") ?? ""
+      const pkce = pkceRaw ? (JSON.parse(pkceRaw) as any) : undefined
+      const expectedState = typeof pkce?.state === "string" ? pkce.state : ""
+      const codeVerifier = typeof pkce?.codeVerifier === "string" ? pkce.codeVerifier : ""
+      if (!expectedState || !codeVerifier) throw new Error("OIDC callback: missing PKCE state (maybe sessionStorage cleared)")
+      if (expectedState !== state) throw new Error("OIDC callback: state mismatch")
+
+      const doc = await ensureOidcDoc()
+      const tokens = await exchangeCode(doc, oidcConfig, { code, codeVerifier })
+      storeOidcTokens(tokens)
+      scheduleOidcRefresh(tokens)
+      try {
+        sessionStorage.removeItem("oa_oidc_pkce")
+      } catch {
+        // ignore
+      }
+      return true
+    } catch (err) {
+      setOidcError(err instanceof Error ? err.message : String(err))
+      clearOidcSession({ keepToken: true })
+      return true
+    } finally {
+      setOidcWorking(false)
+    }
+  }
+
+  async function oidcRestoreFromStorage() {
+    if (!oidcConfig) return
+    setOidcError("")
+    const raw = sessionStorage.getItem("oa_oidc_tokens")
+    if (!raw) return
+    const stored = parseStoredOidcTokens(raw)
+    if (!stored) return
+
+    const now = Date.now()
+    if (stored.expiresAtMs - now > 60_000) {
+      setOidcTokens(stored)
+      setAuthToken(`Bearer ${stored.accessToken}`)
+      scheduleOidcRefresh(stored)
+      return
+    }
+
+    if (!stored.refreshToken) return
+    if (stored.refreshExpiresAtMs && stored.refreshExpiresAtMs - now <= 60_000) return
+
+    setOidcWorking(true)
+    try {
+      const doc = await ensureOidcDoc()
+      const refreshed = await refreshTokens(doc, oidcConfig, { refreshToken: stored.refreshToken })
+      const merged: OidcTokens = {
+        ...refreshed,
+        refreshToken: refreshed.refreshToken ?? stored.refreshToken,
+        refreshExpiresAtMs: refreshed.refreshExpiresAtMs ?? stored.refreshExpiresAtMs,
+        idToken: refreshed.idToken ?? stored.idToken,
+      }
+      storeOidcTokens(merged)
+      scheduleOidcRefresh(merged)
+    } catch (err) {
+      setOidcError(err instanceof Error ? err.message : String(err))
+      clearOidcSession({ keepToken: true })
+    } finally {
+      setOidcWorking(false)
+    }
+  }
+
+  async function oidcRefreshNow() {
+    if (!oidcConfig) return
+    const current = oidcTokens()
+    if (!current?.refreshToken) return
+
+    const now = Date.now()
+    if (current.refreshExpiresAtMs && current.refreshExpiresAtMs - now <= 60_000) {
+      clearOidcSession()
+      return
+    }
+
+    setOidcError("")
+    setOidcWorking(true)
+    try {
+      const doc = await ensureOidcDoc()
+      const refreshed = await refreshTokens(doc, oidcConfig, { refreshToken: current.refreshToken })
+      const merged: OidcTokens = {
+        ...refreshed,
+        refreshToken: refreshed.refreshToken ?? current.refreshToken,
+        refreshExpiresAtMs: refreshed.refreshExpiresAtMs ?? current.refreshExpiresAtMs,
+        idToken: refreshed.idToken ?? current.idToken,
+      }
+      storeOidcTokens(merged)
+      scheduleOidcRefresh(merged)
+    } catch (err) {
+      setOidcError(err instanceof Error ? err.message : String(err))
+      clearOidcSession()
+    } finally {
+      setOidcWorking(false)
+    }
+  }
+
+  function oidcLogout() {
+    const doc = oidcDoc()
+    const tokens = oidcTokens()
+    const endSessionUrl = doc?.end_session_endpoint
+
+    clearOidcSession()
+
+    if (!oidcConfig || !endSessionUrl) return
+    const url = new URL(endSessionUrl)
+    url.searchParams.set("client_id", oidcConfig.clientId)
+    url.searchParams.set("post_logout_redirect_uri", oidcConfig.redirectUri)
+    if (tokens?.idToken) url.searchParams.set("id_token_hint", tokens.idToken)
+    window.location.assign(url.toString())
+  }
+
   createEffect(() => {
     const text = modelMorphMapText()
     try {
@@ -278,6 +566,15 @@ export function App() {
     // Re-send mapping when config changes.
     modelMorphMapConfig()
     sendModelMorphMap()
+  })
+
+  createEffect(() => {
+    const id = presentAssetId()
+    const t = authToken()
+    void t
+    if (!id) return
+    const url = assetUrl(id)
+    if (url !== presentSrc()) setPresentSrc(url)
   })
 
   function assetUrl(assetId: string) {
@@ -878,10 +1175,19 @@ export function App() {
     ws?.send(JSON.stringify(msg))
   }
 
-  onMount(connect)
+  onMount(() => {
+    void (async () => {
+      if (oidcConfig) {
+        const handled = await oidcHandleCallback()
+        if (!handled) await oidcRestoreFromStorage()
+      }
+      if (!oidcConfig || authToken().trim()) connect()
+    })()
+  })
   onCleanup(() => {
     manualDisconnect = true
     if (reconnectTimer) clearTimeout(reconnectTimer)
+    if (oidcRefreshTimer) clearTimeout(oidcRefreshTimer)
     stopSpeech()
     stopTtsAudio()
     stopPresent()
@@ -922,11 +1228,47 @@ export function App() {
             <div class="text-xs text-slate-400">Auth token (OIDC JWT / service token). 修改后点击 Disconnect/Connect 生效。</div>
             <input
               class="mt-1 w-full rounded border border-slate-800 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-slate-700"
+              data-testid="auth-token"
               placeholder="Bearer token (可留空：OA_AUTH_MODE=disabled)"
               value={authToken()}
-              onInput={(e) => setAuthToken(e.currentTarget.value)}
+              readOnly={Boolean(oidcTokens())}
+              onInput={(e) => {
+                if (oidcTokens()) return
+                setAuthToken(e.currentTarget.value)
+              }}
             />
           </div>
+          {oidcConfig ? (
+            <div class="mb-3 rounded border border-slate-800 bg-slate-950 p-3">
+              <div class="text-xs text-slate-400">
+                OIDC（Keycloak）: <span class="font-mono">{oidcConfig.issuer}</span> / <span class="font-mono">{oidcConfig.clientId}</span>
+              </div>
+              <div class="mt-2 flex flex-wrap gap-2">
+                <button class="rounded bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700" disabled={oidcWorking()} onClick={oidcLogin}>
+                  Sign in
+                </button>
+                <button
+                  class="rounded bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700"
+                  disabled={oidcWorking() || !oidcTokens()?.refreshToken}
+                  onClick={() => void oidcRefreshNow()}
+                >
+                  Refresh
+                </button>
+                <button class="rounded bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700" disabled={oidcWorking() || !oidcTokens()} onClick={oidcLogout}>
+                  Sign out
+                </button>
+              </div>
+              {oidcError() ? <div class="mt-2 text-sm text-rose-300">{oidcError()}</div> : null}
+              {oidcDebugScope() ? (
+                <div class="mt-2 text-xs text-slate-300">
+                  <span class="font-mono">
+                    sub={oidcDebugScope()!.sub || "-"} tenant={oidcDebugScope()!.tenant || "-"} project={oidcDebugScope()!.project || "-"} tags=
+                    {oidcDebugScope()!.tags || "-"}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div class="flex items-center justify-between">
             <div class="text-sm">
               Status: <span class="font-mono" data-testid="ws-status">{status()}</span>
@@ -935,7 +1277,11 @@ export function App() {
               State: <span class="font-mono" data-testid="oa-state">{lastState()}</span>
             </div>
           </div>
-          {connectionError() ? <div class="mt-2 text-sm text-rose-300">{connectionError()}</div> : null}
+          {connectionError() ? (
+            <div class="mt-2 text-sm text-rose-300" data-testid="ws-error">
+              {connectionError()}
+            </div>
+          ) : null}
           <div class="mt-3 text-sm text-slate-200" data-testid="user-subtitle">
             User: {userSubtitle()}
           </div>

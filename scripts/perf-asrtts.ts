@@ -2,6 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 import { Ws } from "@open-assistant/protocol"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
+import { collectPerfMeta, sanitizeRunId } from "./perf-meta"
 
 type TurnResult = {
   sessionID: string
@@ -659,6 +660,7 @@ async function runOneSession(opts: {
 }
 
 async function main() {
+  const runId = sanitizeRunId(process.env.OA_PERF_RUN_ID ?? String(Date.now()))
   const ROOT = fileURLToPath(new URL("..", import.meta.url))
   const wsUrl = process.env.OA_PERF_GATEWAY_WS_URL ?? "ws://127.0.0.1:7001/ws"
   const sessions = Number(process.env.OA_PERF_SESSIONS ?? "10")
@@ -675,7 +677,7 @@ async function main() {
 
   // eslint-disable-next-line no-console
   console.log(
-    `Perf(ASR+TTS): sessions=${sessions} turnsPerSession=${turnsPerSession} audioMs=${Math.round(frames.audioMs)} frameMs=${
+    `Perf(ASR+TTS): runId=${runId} sessions=${sessions} turnsPerSession=${turnsPerSession} audioMs=${Math.round(frames.audioMs)} frameMs=${
       frames.frameMs
     } realtime=${realtime ? "1" : "0"} interruptProb=${interruptProb.toFixed(2)} ws=${wsUrl}`,
   )
@@ -841,6 +843,7 @@ async function main() {
   })()
 
   const report = {
+    meta: collectPerfMeta({ runId }),
     ts: new Date().toISOString(),
     config: {
       wsUrl,
@@ -880,7 +883,7 @@ async function main() {
     results: all,
   }
 
-  const outFile = path.join(ROOT, "test-results", `perf-asrtts-report-${Date.now()}.json`)
+  const outFile = path.join(ROOT, "test-results", `perf-asrtts-report-${runId}.json`)
   await writeJson(outFile, report)
   // eslint-disable-next-line no-console
   console.log(`Report written: ${outFile}`)

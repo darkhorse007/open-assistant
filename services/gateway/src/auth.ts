@@ -79,7 +79,8 @@ function claimToStringArray(value: unknown): string[] | undefined {
 }
 
 async function discoverJwksUrl(issuer: string): Promise<string> {
-  const url = new URL("/.well-known/openid-configuration", issuer)
+  const trimmed = issuer.trim().replace(/\/+$/, "")
+  const url = new URL(`${trimmed}/.well-known/openid-configuration`)
   const res = await fetch(url)
   if (!res.ok) throw new Error(`OIDC discovery failed: ${res.status} ${res.statusText}`)
   const json = await res.json()

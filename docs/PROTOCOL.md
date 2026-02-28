@@ -20,7 +20,7 @@ WebSocket：
 ## HTTP（与 WS 配套）
 
 - `GET /assets/:assetId[?token=...]`：播放资源拉取（支持 `Range`）。浏览器 `<video>` 无法自定义请求 header，因此推荐使用 query `token`
-- `POST /mcp`：OpenCode Server 调用的 MCP 工具入口；开启鉴权时需要提供 `Authorization: Bearer <token>`（或 `?token=...`）
+- `POST /mcp`：OpenCode Server 调用的 MCP 工具入口；开启鉴权时需要提供 `Authorization: Bearer <OA_OPENCODE_MCP_TOKEN>`（或 `?token=...`）
 
 ---
 
